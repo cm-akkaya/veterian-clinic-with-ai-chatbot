@@ -116,7 +116,7 @@ services:
       - 8080:8080
 
   tracing-server:
-    image: ${HARBOR_FQDN}/ngn/openzipkin/zipkin:${IMAGE_TAG}
+    image: image: openzipkin/zipkin:latest
     container_name: tracing-server
     deploy:
       resources:
@@ -141,7 +141,7 @@ services:
       - 9090:9090
 
   grafana-server:
-    image: ${HARBOR_FQDN}/ngn/veterian-clinic-with-ai-chatbot-grafana-server:${IMAGE_TAG}
+    image: image: grafana/grafana:latest
     container_name: grafana-server
     deploy:
       resources:
@@ -151,7 +151,7 @@ services:
       - 3030:3000
 
   prometheus-server:
-    image: ${HARBOR_FQDN}/ngn/veterian-clinic-with-ai-chatbot-prometheus-server:${IMAGE_TAG}
+    image: image: prom/prometheus:latest
     container_name: prometheus-server
     deploy:
       resources:

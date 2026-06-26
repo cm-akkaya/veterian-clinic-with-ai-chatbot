@@ -19,9 +19,6 @@ IMAGES=(
 "springcommunity/spring-petclinic-vets-service:latest|spring-petclinic-vets-service"
 "springcommunity/spring-petclinic-customers-service:latest|spring-petclinic-customers-service"
 "springcommunity/spring-petclinic-admin-server:latest|spring-petclinic-admin-server"
-"veterian-clinic-with-ai-chatbot-prometheus-server:latest|veterian-clinic-with-ai-chatbot-prometheus-server"
-"veterian-clinic-with-ai-chatbot-grafana-server:latest|veterian-clinic-with-ai-chatbot-grafana-server"
-"openzipkin/zipkin:latest|zipkin"
 )
 
 # Her imaji Harbor'a tag + push yap
