@@ -1,0 +1,175 @@
+pipeline {
+    agent any
+
+    environment {
+        JAVA_HOME            = "/usr/lib/jvm/java-21-openjdk-amd64"
+        PATH                 = "${JAVA_HOME}/bin:${PATH}:/usr/local/bin"
+
+        APP_NAME             = "veterian-clinic-with-ai-chatbot"
+        GIT_REPO_URL         = "https://github.com/cm-akkaya/veterian-clinic-with-ai-chatbot.git"
+        GIT_BRANCH           = "main"
+
+        HARBOR_FQDN          = "185.32.14.7"
+        HARBOR_PROJECT       = "ngn"
+        IMAGE_TAG            = "${BUILD_NUMBER}"          // Her build'e unique tag
+
+        // Jenkins Credentials'da tanımlı olmalı:
+        // Kind: "Username with password"  |  ID: harbor-robot-credentials
+        HARBOR_CREDENTIALS   = "harbor-robot-credentials"
+    }
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))   // Son 10 build'i tut
+        timestamps()                                      // Log satırlarına zaman damgası
+        timeout(time: 30, unit: 'MINUTES')               // Toplam pipeline timeout
+    }
+
+    stages {
+
+        // ------------------------------------------------------------------ //
+        stage('Checkout') {
+        // ------------------------------------------------------------------ //
+            steps {
+                echo "==> Checking out branch: ${GIT_BRANCH}"
+                checkout([
+                    $class           : 'GitSCM',
+                    branches         : [[name: "*/${GIT_BRANCH}"]],
+                    userRemoteConfigs: [[url: "${GIT_REPO_URL}"]]
+                ])
+                sh 'echo "Workspace: ${WORKSPACE}" && ls -la'
+            }
+        }
+
+        // ------------------------------------------------------------------ //
+        stage('Build JAR + Docker Images') {
+        // ------------------------------------------------------------------ //
+            steps {
+                echo "==> Building JARs and Docker images with Maven (Java 21)"
+                sh '''
+                    java -version
+                    chmod +x ./mvnw
+                    ./mvnw clean install -P buildDocker -DskipTests \
+                        -Dmaven.repo.local=${WORKSPACE}/.m2
+                '''
+            }
+            post {
+                success { echo "✅ Maven build başarılı." }
+                failure { echo "❌ Maven build başarısız. Logları kontrol et." }
+            }
+        }
+
+        // ------------------------------------------------------------------ //
+        stage('Harbor Login') {
+        // ------------------------------------------------------------------ //
+            steps {
+                echo "==> Harbor'a login olunuyor: ${HARBOR_FQDN}"
+                withCredentials([usernamePassword(
+                    credentialsId : "${HARBOR_CREDENTIALS}",
+                    usernameVariable: 'HARBOR_USER',
+                    passwordVariable: 'HARBOR_PASS'
+                )]) {
+                    sh 'echo "$HARBOR_PASS" | docker login ${HARBOR_FQDN} -u "$HARBOR_USER" --password-stdin'
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------ //
+        stage('Tag & Push Images to Harbor') {
+        // ------------------------------------------------------------------ //
+            steps {
+                echo "==> İmajlar tag'leniyor ve Harbor'a push ediliyor (tag: ${IMAGE_TAG})"
+                withCredentials([usernamePassword(
+                    credentialsId : "${HARBOR_CREDENTIALS}",
+                    usernameVariable: 'HARBOR_USER',
+                    passwordVariable: 'HARBOR_PASS'
+                )]) {
+                    sh '''
+                        export HARBOR_FQDN="${HARBOR_FQDN}"
+                        export PROJECT="${HARBOR_PROJECT}"
+                        export TAG="${IMAGE_TAG}"
+                        chmod +x ./scripts/image-to-harbor.sh
+                        ./scripts/image-to-harbor.sh
+                    '''
+                }
+                sh 'docker image ls | grep ${HARBOR_FQDN}'
+            }
+            post {
+                success { echo "✅ Tüm imajlar Harbor'a push edildi." }
+                failure { echo "❌ Harbor push başarısız." }
+            }
+        }
+
+        // ------------------------------------------------------------------ //
+        stage('Stop Old Containers') {
+        // ------------------------------------------------------------------ //
+            steps {
+                echo "==> Eski container'lar durduruluyor..."
+                sh '''
+                    cd ${WORKSPACE}
+                    docker compose down --remove-orphans || true
+                '''
+            }
+        }
+
+        // ------------------------------------------------------------------ //
+        stage('Deploy') {
+        // ------------------------------------------------------------------ //
+            steps {
+                echo "==> Uygulama başlatılıyor (Harbor image tag: ${IMAGE_TAG})"
+                sh '''
+                    cd ${WORKSPACE}
+                    IMAGE_TAG=${IMAGE_TAG} \
+                    HARBOR_FQDN=${HARBOR_FQDN} \
+                    HARBOR_PROJECT=${HARBOR_PROJECT} \
+                    docker compose -f docker-compose.harbor.yml up -d
+                '''
+            }
+            post {
+                success { echo "✅ Deploy tamamlandı." }
+                failure { echo "❌ Deploy başarısız." }
+            }
+        }
+
+        // ------------------------------------------------------------------ //
+        stage('Health Check') {
+        // ------------------------------------------------------------------ //
+            steps {
+                echo "==> Servisler ayağa kalkıyor, 40 saniye bekleniyor..."
+                sh 'sleep 40'
+                sh '''
+                    cd ${WORKSPACE}
+                    docker compose -f docker-compose.harbor.yml ps
+                '''
+                echo "==> API Gateway erişim kontrolü:"
+                sh '''
+                    curl -sf http://${HARBOR_FQDN}:8080/actuator/health \
+                        && echo "✅ API Gateway sağlıklı" \
+                        || echo "⚠️  API Gateway henüz hazır olmayabilir, container loglarını kontrol et"
+                '''
+            }
+        }
+
+    } // end stages
+
+    post {
+        success {
+            echo """
+            ✅ Pipeline başarıyla tamamlandı!
+            ─────────────────────────────────────────
+            Build     : #${BUILD_NUMBER}
+            Image Tag : ${IMAGE_TAG}
+            App URL   : http://${HARBOR_FQDN}:8080
+            Harbor    : http://${HARBOR_FQDN}/harbor/projects
+            ─────────────────────────────────────────
+            """
+        }
+        failure {
+            echo "❌ Pipeline başarısız! Build #${BUILD_NUMBER} — Jenkins loglarını incele."
+        }
+        always {
+            echo "==> Dangling (sahipsiz) imajlar temizleniyor..."
+            sh 'docker image prune -f'   // -a YOK: sadece dangling sil, build cache kalsın
+            sh 'docker logout ${HARBOR_FQDN} || true'
+        }
+    }
+}

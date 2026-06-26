@@ -1,0 +1,161 @@
+# Bu dosya Jenkins pipeline tarafından kullanılır.
+# Image'ları springcommunity yerine Harbor'dan çeker.
+# Kullanım: IMAGE_TAG=42 HARBOR_FQDN=185.32.14.7 HARBOR_PROJECT=ngn docker compose -f docker-compose.harbor.yml up -d
+
+services:
+  config-server:
+    image: ${HARBOR_FQDN}/ngn/spring-petclinic-config-server:${IMAGE_TAG}
+    container_name: config-server
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "curl", "-I", "http://config-server:8888"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - 8888:8888
+
+  discovery-server:
+    image: ${HARBOR_FQDN}/ngn/spring-petclinic-discovery-server:${IMAGE_TAG}
+    container_name: discovery-server
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://discovery-server:8761"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    depends_on:
+      config-server:
+        condition: service_healthy
+    ports:
+      - 8761:8761
+
+  customers-service:
+    image: ${HARBOR_FQDN}/ngn/spring-petclinic-customers-service:${IMAGE_TAG}
+    container_name: customers-service
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    depends_on:
+      config-server:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    ports:
+      - 8081:8081
+
+  visits-service:
+    image: ${HARBOR_FQDN}/ngn/spring-petclinic-visits-service:${IMAGE_TAG}
+    container_name: visits-service
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    depends_on:
+      config-server:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    ports:
+      - 8082:8082
+
+  vets-service:
+    image: ${HARBOR_FQDN}/ngn/spring-petclinic-vets-service:${IMAGE_TAG}
+    container_name: vets-service
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    depends_on:
+      config-server:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    ports:
+      - 8083:8083
+
+  genai-service:
+    image: ${HARBOR_FQDN}/ngn/spring-petclinic-genai-service:${IMAGE_TAG}
+    container_name: genai-service
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - AZURE_OPENAI_KEY=${AZURE_OPENAI_KEY}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    depends_on:
+      config-server:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    ports:
+      - 8084:8084
+
+  api-gateway:
+    image: ${HARBOR_FQDN}/ngn/spring-petclinic-api-gateway:${IMAGE_TAG}
+    container_name: api-gateway
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    depends_on:
+      config-server:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    ports:
+      - 8080:8080
+
+  tracing-server:
+    image: ${HARBOR_FQDN}/ngn/openzipkin/zipkin:${IMAGE_TAG}
+    container_name: tracing-server
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    ports:
+      - 9411:9411
+
+  admin-server:
+    image: ${HARBOR_FQDN}/ngn/spring-petclinic-admin-server:${IMAGE_TAG}
+    container_name: admin-server
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    depends_on:
+      config-server:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    ports:
+      - 9090:9090
+
+  grafana-server:
+    image: ${HARBOR_FQDN}/ngn/veterian-clinic-ai-chatbot-grafana-server:${IMAGE_TAG}
+    container_name: grafana-server
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    ports:
+      - 3030:3000
+
+  prometheus-server:
+    image: ${HARBOR_FQDN}/ngn/veterian-clinic-ai-chatbot-prometheus-server:${IMAGE_TAG}
+    container_name: prometheus-server
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    ports:
+      - 9091:9090
