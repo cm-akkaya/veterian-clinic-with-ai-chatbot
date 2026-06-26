@@ -68,7 +68,9 @@ pipeline {
                     usernameVariable: 'HARBOR_USER',
                     passwordVariable: 'HARBOR_PASS'
                 )]) {
-                    sh 'echo "$HARBOR_PASS" | docker login ' + env.HARBOR_FQDN + ' -u "$HARBOR_USER" --password-stdin'
+                    sh '''
+                    echo "${HARBOR_PASS}" | docker login "${HARBOR_FQDN}" -u "${HARBOR_USER}" --password-stdin
+                    '''
                 }
             }
         }
