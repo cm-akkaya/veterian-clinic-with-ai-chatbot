@@ -90,7 +90,7 @@ pipeline {
                         export PROJECT="${HARBOR_PROJECT}"
                         export TAG="${IMAGE_TAG}"
                         chmod +x ./scripts/image-to-harbor.sh
-                        ./scripts/image-to-harbor.sh
+                        bash scripts/image-to-harbor.sh
                     '''
                 }
                 sh 'docker image ls | grep ${HARBOR_FQDN}'
