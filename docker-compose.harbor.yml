@@ -141,7 +141,7 @@ services:
       - 9090:9090
 
   grafana-server:
-    image: ${HARBOR_FQDN}/ngn/veterian-clinic-ai-chatbot-grafana-server:${IMAGE_TAG}
+    image: ${HARBOR_FQDN}/ngn/veterian-clinic-with-ai-chatbot-grafana-server:${IMAGE_TAG}
     container_name: grafana-server
     deploy:
       resources:
@@ -151,7 +151,7 @@ services:
       - 3030:3000
 
   prometheus-server:
-    image: ${HARBOR_FQDN}/ngn/veterian-clinic-ai-chatbot-prometheus-server:${IMAGE_TAG}
+    image: ${HARBOR_FQDN}/ngn/veterian-clinic-with-ai-chatbot-prometheus-server:${IMAGE_TAG}
     container_name: prometheus-server
     deploy:
       resources:
