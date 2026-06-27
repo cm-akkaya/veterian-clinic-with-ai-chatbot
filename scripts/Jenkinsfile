@@ -136,7 +136,7 @@ pipeline {
         stage('Health Check') {
         // ------------------------------------------------------------------ //
             steps {
-                echo "==> Servisler ayağa kalkıyor, 40 saniye bekleniyor..."
+                echo "==> Servisler ayağa kalkıyor, 30 saniye bekleniyor..."
                 sh 'sleep 30'
                 sh '''
                     cd ${WORKSPACE}
