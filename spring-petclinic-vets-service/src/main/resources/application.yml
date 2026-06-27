@@ -14,3 +14,18 @@ spring:
     activate:
       on-profile: docker
     import: configserver:http://config-server:8888
+---
+spring:
+  config:
+    activate:
+      on-profile: mysql
+  datasource:
+    url: jdbc:mysql://mysql-server/petclinic
+    username: root
+    password: petclinic
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  sql:
+    init:
+      schema-locations: classpath*:db/mysql/schema.sql
+      data-locations: classpath*:db/mysql/data.sql
+      mode: always
