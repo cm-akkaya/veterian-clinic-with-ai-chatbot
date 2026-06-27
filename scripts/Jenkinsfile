@@ -137,7 +137,7 @@ pipeline {
         // ------------------------------------------------------------------ //
             steps {
                 echo "==> Servisler ayağa kalkıyor, 40 saniye bekleniyor..."
-                sh 'sleep 40'
+                sh 'sleep 30'
                 sh '''
                     cd ${WORKSPACE}
                     docker compose -f docker-compose.harbor.yml ps
