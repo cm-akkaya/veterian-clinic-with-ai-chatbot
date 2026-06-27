@@ -102,6 +102,7 @@ services:
       - AZURE_OPENAI_KEY=${AZURE_OPENAI_KEY}
       - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
       - SPRING_PROFILES_ACTIVE=docker
+    depends_on:  
       config-server:
         condition: service_healthy
       discovery-server:
