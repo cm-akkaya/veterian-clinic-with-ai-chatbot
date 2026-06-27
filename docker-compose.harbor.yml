@@ -37,25 +37,35 @@ services:
       - 8761:8761
 
   customers-service:
-    image: ${HARBOR_FQDN}/ngn/spring-petclinic-customers-service:${IMAGE_TAG}
-    container_name: customers-service
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-    depends_on:
-      config-server:
-        condition: service_healthy
-      discovery-server:
-        condition: service_healthy
-      mysql-server:          # <-- ekle
-        condition: service_healthy       
-    ports:
-      - 8081:8081
+      image: ${HARBOR_FQDN}/ngn/spring-petclinic-customers-service:${IMAGE_TAG}
+      container_name: customers-service
+      environment:
+        - SPRING_DATASOURCE_URL=jdbc:mysql://mysql-server/petclinic?allowPublicKeyRetrieval=true&useSSL=false
+        - SPRING_DATASOURCE_USERNAME=root
+        - SPRING_DATASOURCE_PASSWORD=petclinic
+        - SPRING_SQL_INIT_MODE=always
+      deploy:
+        resources:
+          limits:
+            memory: 512M
+      depends_on:
+        config-server:
+          condition: service_healthy
+        discovery-server:
+          condition: service_healthy
+        mysql-server:
+          condition: service_healthy
+      ports:
+        - 8081:8081
 
   visits-service:
     image: ${HARBOR_FQDN}/ngn/spring-petclinic-visits-service:${IMAGE_TAG}
     container_name: visits-service
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql-server/petclinic?allowPublicKeyRetrieval=true&useSSL=false
+      - SPRING_DATASOURCE_USERNAME=root
+      - SPRING_DATASOURCE_PASSWORD=petclinic
+      - SPRING_SQL_INIT_MODE=always
     deploy:
       resources:
         limits:
@@ -65,14 +75,19 @@ services:
         condition: service_healthy
       discovery-server:
         condition: service_healthy
-      mysql-server:          # <-- ekle
-        condition: service_healthy 
+      mysql-server:
+        condition: service_healthy
     ports:
       - 8082:8082
 
   vets-service:
     image: ${HARBOR_FQDN}/ngn/spring-petclinic-vets-service:${IMAGE_TAG}
     container_name: vets-service
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql-server/petclinic?allowPublicKeyRetrieval=true&useSSL=false
+      - SPRING_DATASOURCE_USERNAME=root
+      - SPRING_DATASOURCE_PASSWORD=petclinic
+      - SPRING_SQL_INIT_MODE=always
     deploy:
       resources:
         limits:
@@ -82,10 +97,11 @@ services:
         condition: service_healthy
       discovery-server:
         condition: service_healthy
-      mysql-server:          # <-- ekle
-        condition: service_healthy 
+      mysql-server:
+        condition: service_healthy
     ports:
       - 8083:8083
+
 
   genai-service:
     image: ${HARBOR_FQDN}/ngn/spring-petclinic-genai-service:${IMAGE_TAG}
