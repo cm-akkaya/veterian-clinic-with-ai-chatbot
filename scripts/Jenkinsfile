@@ -44,7 +44,7 @@ pipeline {
         stage('Build JAR + Docker Images') {
         // ------------------------------------------------------------------ //
             steps {
-                echo "==> Building JARs and Docker images with Maven (Java 21)"
+                echo "==> Building JARs and Spring Docker images with Maven (Java 21)"
                 sh '''
                     java -version
                     chmod +x ./mvnw
@@ -55,6 +55,22 @@ pipeline {
             post {
                 success { echo "✅ Maven build başarılı." }
                 failure { echo "❌ Maven build başarısız. Logları kontrol et." }
+            }
+        }
+
+        // ------------------------------------------------------------------ //
+        stage('Build Grafana & Prometheus Images') {
+        // ------------------------------------------------------------------ //
+            steps {
+                echo "==> Grafana ve Prometheus Docker image'ları build ediliyor..."
+                sh '''
+                    docker build -t ngn-list-grafana-server:latest    ./docker/grafana
+                    docker build -t ngn-list-prometheus-server:latest  ./docker/prometheus
+                '''
+            }
+            post {
+                success { echo "✅ Grafana ve Prometheus image'ları hazır." }
+                failure { echo "❌ Grafana/Prometheus build başarısız." }
             }
         }
 
