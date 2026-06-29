@@ -1,0 +1,356 @@
+pipeline {
+    agent any
+
+    environment {
+        JAVA_HOME            = "/usr/lib/jvm/java-21-openjdk-amd64"
+        PATH                 = "${JAVA_HOME}/bin:${PATH}:/usr/local/bin"
+
+        APP_NAME             = "veterian-clinic-with-ai-chatbot"
+        GIT_REPO_URL         = "https://github.com/cm-akkaya/veterian-clinic-with-ai-chatbot.git"
+        GIT_BRANCH           = "kubernetes"
+
+        HARBOR_FQDN          = "185.32.14.7"
+        HARBOR_PROJECT       = "ngn"
+        IMAGE_TAG            = "${BUILD_NUMBER}"
+
+        K8S_NAMESPACE        = "petclinic"
+        K8S_PUBLIC_IP        = "185.32.14.38"
+        K8S_MANIFEST_DIR     = "k8s-manifests"
+
+        // Jenkins Credentials'da tanımlı olmalı:
+        // ID: harbor-robot-credentials  → Kind: Username with password
+        //     username : robot$ngn+ngn-list-robot
+        //     password : <robot şifresi>
+        HARBOR_CREDENTIALS   = "harbor-robot-credentials"
+    }
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timestamps()
+        timeout(time: 45, unit: 'MINUTES')
+    }
+
+    stages {
+
+        // ------------------------------------------------------------------ //
+        stage('Checkout') {
+        // ------------------------------------------------------------------ //
+            steps {
+                echo "==> Branch checkout: ${GIT_BRANCH}"
+                checkout([
+                    $class           : 'GitSCM',
+                    branches         : [[name: "*/${GIT_BRANCH}"]],
+                    userRemoteConfigs: [[url: "${GIT_REPO_URL}"]]
+                ])
+                sh '''
+                    echo "Workspace : ${WORKSPACE}"
+                    echo "Branch    : ${GIT_BRANCH}"
+                    echo "Build No  : ${BUILD_NUMBER}"
+                    ls -la
+                '''
+            }
+        }
+
+        // ------------------------------------------------------------------ //
+        stage('Build JAR + Docker Images') {
+        // ------------------------------------------------------------------ //
+            steps {
+                echo "==> Maven build başlıyor (Java 21, profile: buildDocker)"
+                sh '''
+                    java -version
+                    chmod +x ./mvnw
+                    ./mvnw clean install -P buildDocker -DskipTests \
+                        -Dmaven.repo.local=${WORKSPACE}/.m2
+                '''
+            }
+            post {
+                success { echo "✅ Maven build başarılı." }
+                failure { echo "❌ Maven build başarısız. Logları kontrol et." }
+            }
+        }
+
+        // ------------------------------------------------------------------ //
+        stage('Harbor Login') {
+        // ------------------------------------------------------------------ //
+            steps {
+                echo "==> Harbor'a login: ${HARBOR_FQDN}"
+                withCredentials([usernamePassword(
+                    credentialsId : "${HARBOR_CREDENTIALS}",
+                    usernameVariable: 'HARBOR_USER',
+                    passwordVariable: 'HARBOR_PASS'
+                )]) {
+                    sh '''
+                        echo "${HARBOR_PASS}" | docker login "${HARBOR_FQDN}" \
+                            -u "${HARBOR_USER}" --password-stdin
+                    '''
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------ //
+        stage('Tag & Push Images to Harbor') {
+        // ------------------------------------------------------------------ //
+            steps {
+                echo "==> İmajlar Harbor'a push ediliyor (tag: ${IMAGE_TAG})"
+                withCredentials([usernamePassword(
+                    credentialsId : "${HARBOR_CREDENTIALS}",
+                    usernameVariable: 'HARBOR_USER',
+                    passwordVariable: 'HARBOR_PASS'
+                )]) {
+                    sh '''
+                        export HARBOR_FQDN="${HARBOR_FQDN}"
+                        export PROJECT="${HARBOR_PROJECT}"
+                        export TAG="${IMAGE_TAG}"
+                        chmod +x ./scripts/image-to-harbor.sh
+                        bash scripts/image-to-harbor.sh
+                    '''
+                }
+                sh 'docker image ls | grep "${HARBOR_FQDN}" | head -20'
+            }
+            post {
+                success { echo "✅ Tüm imajlar Harbor'a push edildi." }
+                failure { echo "❌ Harbor push başarısız." }
+            }
+        }
+
+        // ------------------------------------------------------------------ //
+        stage('Deploy to Kubernetes') {
+        // ------------------------------------------------------------------ //
+            steps {
+                echo "==> Kubernetes'e deploy başlıyor (tag: ${IMAGE_TAG}, namespace: ${K8S_NAMESPACE})"
+                withCredentials([usernamePassword(
+                    credentialsId : "${HARBOR_CREDENTIALS}",
+                    usernameVariable: 'HARBOR_USER',
+                    passwordVariable: 'HARBOR_PASS'
+                )]) {
+                    sh '''
+                        set -e
+                        MANIFEST_DIR="${WORKSPACE}/${K8S_MANIFEST_DIR}"
+                        NAMESPACE="${K8S_NAMESPACE}"
+                        TAG="${IMAGE_TAG}"
+                        HARBOR="${HARBOR_FQDN}"
+                        TMPDIR_K8S=$(mktemp -d)
+                        trap 'rm -rf "$TMPDIR_K8S"' EXIT
+
+                        echo "--- [1/7] StorageClass kontrol ---"
+                        if ! kubectl get storageclass ebs-gp3 > /dev/null 2>&1; then
+                            echo "StorageClass oluşturuluyor..."
+                            kubectl apply -f - << 'SCEOF'
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: ebs-gp3
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+allowVolumeExpansion: true
+parameters:
+  type: gp3
+  fsType: ext4
+SCEOF
+                        else
+                            echo "StorageClass mevcut, atlanıyor."
+                        fi
+
+                        echo "--- [2/7] Worker node taint kontrolü ---"
+                        for node in $(kubectl get nodes --no-headers \
+                            -l '!node-role.kubernetes.io/control-plane,!node-role/frontend' \
+                            -o custom-columns=NAME:.metadata.name | grep worker); do
+                            TAINTS=$(kubectl get node "$node" \
+                                -o jsonpath='{.spec.taints[*].key}' 2>/dev/null || true)
+                            if echo "$TAINTS" | grep -q "owner"; then
+                                kubectl taint node "$node" owner:NoSchedule- 2>/dev/null || true
+                                echo "Taint kaldırıldı: $node"
+                            fi
+                        done
+
+                        echo "--- [3/7] Harbor TLS sertifikası dağıtılıyor ---"
+                        openssl s_client -connect "${HARBOR}:443" -showcerts \
+                            </dev/null 2>/dev/null \
+                            | openssl x509 -outform PEM > "${TMPDIR_K8S}/harbor-ca.crt"
+
+                        kubectl create configmap harbor-ca-cert \
+                            --from-file=harbor-ca.crt="${TMPDIR_K8S}/harbor-ca.crt" \
+                            -n kube-system --dry-run=client -o yaml | kubectl apply -f -
+
+                        python3 - << PYEOF
+content = """apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: harbor-cert-installer
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      app: harbor-cert-installer
+  template:
+    metadata:
+      labels:
+        app: harbor-cert-installer
+    spec:
+      tolerations:
+        - operator: Exists
+      hostPID: true
+      initContainers:
+        - name: install-cert
+          image: alpine:latest
+          securityContext:
+            privileged: true
+          command:
+            - sh
+            - -c
+            - |
+              CERT_DIR="/host/etc/containerd/certs.d/${HARBOR}"
+              mkdir -p "\\$CERT_DIR"
+              cp /tmp/ca/harbor-ca.crt "\\$CERT_DIR/harbor-ca.crt"
+              printf 'server = "https://${HARBOR}"\\\\n[host."https://${HARBOR}"]\\\\n  ca = "/etc/containerd/certs.d/${HARBOR}/harbor-ca.crt"\\\\n' > "\\$CERT_DIR/hosts.toml"
+              CONFIG="/host/etc/containerd/config.toml"
+              if grep -q 'config_path = ""' "\\$CONFIG"; then
+                sed -i 's|config_path = ""|config_path = "/etc/containerd/certs.d"|g' "\\$CONFIG"
+              fi
+              nsenter -t 1 -m -u -i -n -p -- systemctl restart containerd
+              sleep 3
+              echo "OK \\$(hostname)"
+          volumeMounts:
+            - name: host-etc
+              mountPath: /host/etc
+            - name: harbor-ca
+              mountPath: /tmp/ca
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: "1m"
+              memory: "8Mi"
+      volumes:
+        - name: host-etc
+          hostPath:
+            path: /etc
+        - name: harbor-ca
+          configMap:
+            name: harbor-ca-cert
+"""
+with open("${TMPDIR_K8S}/harbor-cert-ds.yaml", "w") as f:
+    f.write(content)
+PYEOF
+                        kubectl apply -f "${TMPDIR_K8S}/harbor-cert-ds.yaml"
+
+                        echo "Sertifika dağıtımı bekleniyor (max 2 dk)..."
+                        ELAPSED=0
+                        while true; do
+                            TOTAL=$(kubectl get pods -n kube-system \
+                                -l app=harbor-cert-installer --no-headers 2>/dev/null | wc -l)
+                            DONE=$(kubectl logs -n kube-system \
+                                -l app=harbor-cert-installer -c install-cert \
+                                2>/dev/null | grep -c "^OK" || true)
+                            echo "  Tamamlanan: ${DONE}/${TOTAL}"
+                            [ "$DONE" -ge "$TOTAL" ] && [ "$TOTAL" -gt 0 ] && break
+                            [ "$ELAPSED" -ge 120 ] && echo "⚠️  Timeout, devam ediliyor..." && break
+                            sleep 5; ELAPSED=$((ELAPSED+5))
+                        done
+
+                        kubectl delete daemonset harbor-cert-installer -n kube-system \
+                            --ignore-not-found
+                        kubectl delete configmap harbor-ca-cert -n kube-system \
+                            --ignore-not-found
+
+                        echo "--- [4/7] Namespace ve imagePullSecret ---"
+                        kubectl apply -f "${MANIFEST_DIR}/00-namespace-and-secret.yaml"
+                        kubectl create secret docker-registry harbor-pull-secret \
+                            --namespace="${NAMESPACE}" \
+                            --docker-server="${HARBOR}" \
+                            --docker-username="${HARBOR_USER}" \
+                            --docker-password="${HARBOR_PASS}" \
+                            --docker-email=admin@petclinic.local \
+                            --dry-run=client -o yaml | kubectl apply -f -
+
+                        echo "--- [5/7] Secret ve PVC ---"
+                        kubectl apply -f "${MANIFEST_DIR}/01-configmap-and-secrets.yaml"
+                        kubectl apply -f "${MANIFEST_DIR}/02-persistentvolumeclaims.yaml"
+
+                        echo "--- [6/7] MySQL ---"
+                        kubectl apply -f "${MANIFEST_DIR}/03-mysql.yaml"
+                        kubectl rollout status statefulset/mysql-server \
+                            -n "${NAMESPACE}" --timeout=240s
+
+                        echo "--- [7/7] Tüm servisler ---"
+                        for f in 04 05 06 07; do
+                            fname=$(ls "${MANIFEST_DIR}/${f}-"*.yaml 2>/dev/null | head -1)
+                            [ -z "$fname" ] && continue
+                            sed "s/IMAGE_TAG/${TAG}/g" "$fname" | kubectl apply -f -
+                        done
+                        kubectl apply -f "${MANIFEST_DIR}/08-ingress.yaml"
+
+                        echo "Config-server bekleniyor..."
+                        kubectl rollout status deployment/config-server \
+                            -n "${NAMESPACE}" --timeout=240s
+                        echo "Discovery-server bekleniyor..."
+                        kubectl rollout status deployment/discovery-server \
+                            -n "${NAMESPACE}" --timeout=240s
+
+                        echo "✅ Kubernetes deploy tamamlandı."
+                    '''
+                }
+            }
+            post {
+                success { echo "✅ Kubernetes deploy başarılı." }
+                failure { echo "❌ Kubernetes deploy başarısız. Logları kontrol et." }
+            }
+        }
+
+        // ------------------------------------------------------------------ //
+        stage('Health Check') {
+        // ------------------------------------------------------------------ //
+            steps {
+                echo "==> Servisler ayağa kalkıyor, 60 saniye bekleniyor..."
+                sh 'sleep 60'
+                sh '''
+                    echo "=== Pod Durumu ==="
+                    kubectl get pods -n "${K8S_NAMESPACE}" -o wide
+
+                    echo ""
+                    echo "=== Ingress ==="
+                    kubectl get ingress -n "${K8S_NAMESPACE}"
+
+                    echo ""
+                    echo "=== API Gateway sağlık kontrolü ==="
+                    curl -sf "http://${K8S_PUBLIC_IP}/actuator/health" \
+                        && echo "✅ API Gateway sağlıklı" \
+                        || echo "⚠️  API Gateway henüz hazır olmayabilir"
+                '''
+            }
+        }
+
+    } // end stages
+
+    post {
+        success {
+            echo """
+            ✅ Pipeline başarıyla tamamlandı!
+            ─────────────────────────────────────────
+            Build      : #${BUILD_NUMBER}
+            Branch     : ${GIT_BRANCH}
+            Image Tag  : ${IMAGE_TAG}
+            ─────────────────────────────────────────
+            App URL    : http://${K8S_PUBLIC_IP}/
+            Eureka     : http://${K8S_PUBLIC_IP}/eureka/
+            Admin      : http://${K8S_PUBLIC_IP}/admin/
+            Grafana    : http://${K8S_PUBLIC_IP}/grafana/
+            Zipkin     : http://${K8S_PUBLIC_IP}/zipkin/
+            Harbor     : https://${HARBOR_FQDN}/harbor/projects
+            ─────────────────────────────────────────
+            """
+        }
+        failure {
+            echo "❌ Pipeline başarısız! Build #${BUILD_NUMBER} — Jenkins loglarını incele."
+        }
+        always {
+            echo "==> Docker temizliği yapılıyor..."
+            sh 'docker image prune -f || true'
+            sh 'docker logout "${HARBOR_FQDN}" || true'
+        }
+    }
+}
