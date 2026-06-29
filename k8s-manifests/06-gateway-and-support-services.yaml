@@ -1,0 +1,311 @@
+# =============================================================================
+# 06-gateway-and-support-services.yaml
+# api-gateway, genai-service, admin-server, tracing-server (zipkin)
+# =============================================================================
+
+---
+# ── API Gateway ────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: petclinic
+  labels:
+    app: api-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      imagePullSecrets:
+        - name: harbor-pull-secret
+      initContainers:
+        - name: wait-for-infra
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              until curl -sf http://config-server:8888/actuator/health && \
+                    curl -sf http://discovery-server:8761/actuator/health; do
+                echo "Infrastructure beklenıyor..."; sleep 5;
+              done
+      containers:
+        - name: api-gateway
+          image: 185.32.14.7/ngn/spring-petclinic-api-gateway:IMAGE_TAG
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "docker"
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 40
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 90
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 4
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: petclinic
+  labels:
+    app: api-gateway
+spec:
+  selector:
+    app: api-gateway
+  ports:
+    - port: 8080
+      targetPort: 8080
+
+---
+# ── GenAI Service ──────────────────────────────────────────────────────────────
+# NOT: Dummy API key ile başlatılıyor. Servis CrashLoopBackOff'a düşebilir.
+# Gerçek key geldiğinde:
+#   kubectl create secret generic genai-secret -n petclinic \
+#     --from-literal=SPRING_AI_OPENAI_API_KEY='sk-...' \
+#     --from-literal=OPENAI_API_KEY='sk-...' \
+#     --dry-run=client -o yaml | kubectl apply -f -
+#   kubectl rollout restart deployment/genai-service -n petclinic
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: genai-service
+  namespace: petclinic
+  labels:
+    app: genai-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: genai-service
+  template:
+    metadata:
+      labels:
+        app: genai-service
+    spec:
+      imagePullSecrets:
+        - name: harbor-pull-secret
+      initContainers:
+        - name: wait-for-infra
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              until curl -sf http://config-server:8888/actuator/health && \
+                    curl -sf http://discovery-server:8761/actuator/health; do
+                echo "Infrastructure beklenıyor..."; sleep 5;
+              done
+      containers:
+        - name: genai-service
+          image: 185.32.14.7/ngn/spring-petclinic-genai-service:IMAGE_TAG
+          ports:
+            - containerPort: 8084
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "docker"
+            - name: SPRING_AUTOCONFIGURE_EXCLUDE
+              value: "org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration"
+            - name: SPRING_AI_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: genai-secret
+                  key: SPRING_AI_OPENAI_API_KEY
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: genai-secret
+                  key: OPENAI_API_KEY
+          # Dummy key ile crash döngüsüne girerse pod'u devre dışı bırakmak için
+          # replicas: 0 yapabilirsin:
+          #   kubectl scale deployment genai-service --replicas=0 -n petclinic
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8084
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 4
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8084
+            initialDelaySeconds: 120
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: genai-service
+  namespace: petclinic
+  labels:
+    app: genai-service
+spec:
+  selector:
+    app: genai-service
+  ports:
+    - port: 8084
+      targetPort: 8084
+
+---
+# ── Admin Server ───────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: admin-server
+  namespace: petclinic
+  labels:
+    app: admin-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: admin-server
+  template:
+    metadata:
+      labels:
+        app: admin-server
+    spec:
+      imagePullSecrets:
+        - name: harbor-pull-secret
+      initContainers:
+        - name: wait-for-infra
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              until curl -sf http://config-server:8888/actuator/health && \
+                    curl -sf http://discovery-server:8761/actuator/health; do
+                echo "Infrastructure beklenıyor..."; sleep 5;
+              done
+      containers:
+        - name: admin-server
+          image: 185.32.14.7/ngn/spring-petclinic-admin-server:IMAGE_TAG
+          ports:
+            - containerPort: 9090
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "docker"
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 9090
+            initialDelaySeconds: 40
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 9090
+            initialDelaySeconds: 90
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 4
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-server
+  namespace: petclinic
+  labels:
+    app: admin-server
+spec:
+  selector:
+    app: admin-server
+  ports:
+    - port: 9090
+      targetPort: 9090
+
+---
+# ── Tracing Server (Zipkin) ────────────────────────────────────────────────────
+# In-memory, PV yok (tasarım gereği)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tracing-server
+  namespace: petclinic
+  labels:
+    app: tracing-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tracing-server
+  template:
+    metadata:
+      labels:
+        app: tracing-server
+    spec:
+      containers:
+        - name: zipkin
+          image: openzipkin/zipkin:latest
+          ports:
+            - containerPort: 9411
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "300m"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tracing-server
+  namespace: petclinic
+  labels:
+    app: tracing-server
+spec:
+  selector:
+    app: tracing-server
+  ports:
+    - port: 9411
+      targetPort: 9411

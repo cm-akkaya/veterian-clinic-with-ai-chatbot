@@ -1,0 +1,125 @@
+# =============================================================================
+# 07-monitoring.yaml
+# Grafana ve Prometheus — Harbor'dan image, PVC ile kalıcı veri
+# =============================================================================
+
+---
+# ── Prometheus ─────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus-server
+  namespace: petclinic
+  labels:
+    app: prometheus-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus-server
+  template:
+    metadata:
+      labels:
+        app: prometheus-server
+    spec:
+      imagePullSecrets:
+        - name: harbor-pull-secret
+      # Prometheus /prometheus dizinine yazabilmek için UID 65534 (nobody) kullanır
+      securityContext:
+        fsGroup: 65534
+        runAsUser: 65534
+        runAsNonRoot: true
+      containers:
+        - name: prometheus
+          image: 185.32.14.7/ngn/spring-petclinic-prometheus-server:IMAGE_TAG
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: prometheus-data
+              mountPath: /prometheus
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "300m"
+      volumes:
+        - name: prometheus-data
+          persistentVolumeClaim:
+            claimName: prometheus-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-server
+  namespace: petclinic
+  labels:
+    app: prometheus-server
+spec:
+  selector:
+    app: prometheus-server
+  ports:
+    - port: 9091
+      targetPort: 9090
+
+---
+# ── Grafana ────────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana-server
+  namespace: petclinic
+  labels:
+    app: grafana-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana-server
+  template:
+    metadata:
+      labels:
+        app: grafana-server
+    spec:
+      imagePullSecrets:
+        - name: harbor-pull-secret
+      # Grafana /var/lib/grafana dizinine yazabilmek için GID 472
+      securityContext:
+        fsGroup: 472
+        runAsUser: 472
+      containers:
+        - name: grafana
+          image: 185.32.14.7/ngn/spring-petclinic-grafana-server:IMAGE_TAG
+          ports:
+            - containerPort: 3000
+          volumeMounts:
+            - name: grafana-data
+              mountPath: /var/lib/grafana
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "300m"
+      volumes:
+        - name: grafana-data
+          persistentVolumeClaim:
+            claimName: grafana-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-server
+  namespace: petclinic
+  labels:
+    app: grafana-server
+spec:
+  selector:
+    app: grafana-server
+  ports:
+    - port: 3030
+      targetPort: 3000

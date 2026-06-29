@@ -1,0 +1,84 @@
+# =============================================================================
+# 08-ingress.yaml
+# Tüm servisleri tek Ingress üzerinden yayınlar
+# Public IP: 185.32.14.38 (ingress-nginx LoadBalancer)
+#
+# Erişim:
+#   Ana uygulama  → http://185.32.14.38/
+#   Eureka        → http://185.32.14.38/eureka/
+#   Admin Server  → http://185.32.14.38/admin/
+#   Grafana       → http://185.32.14.38/grafana/
+#   Prometheus    → http://185.32.14.38/prometheus/
+#   Zipkin        → http://185.32.14.38/zipkin/
+# =============================================================================
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: petclinic-ingress
+  namespace: petclinic
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          # ── Ana uygulama (API Gateway → tüm frontend) ──────────────────────
+          - path: /()(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: api-gateway
+                port:
+                  number: 8080
+
+          # ── Eureka Discovery UI ────────────────────────────────────────────
+          - path: /eureka(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: discovery-server
+                port:
+                  number: 8761
+
+          # ── Spring Boot Admin ──────────────────────────────────────────────
+          - path: /admin(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: admin-server
+                port:
+                  number: 9090
+
+          # ── Grafana ────────────────────────────────────────────────────────
+          - path: /grafana(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: grafana-server
+                port:
+                  number: 3030
+
+          # ── Prometheus ─────────────────────────────────────────────────────
+          - path: /prometheus(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: prometheus-server
+                port:
+                  number: 9091
+
+          # ── Zipkin ─────────────────────────────────────────────────────────
+          - path: /zipkin(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: tracing-server
+                port:
+                  number: 9411
