@@ -9,7 +9,7 @@ pipeline {
         GIT_REPO_URL         = "https://github.com/cm-akkaya/veterian-clinic-with-ai-chatbot.git"
         GIT_BRANCH           = "kubernetes"
 
-        HARBOR_FQDN          = "185.32.14.7"
+        HARBOR_FQDN          = "172.31.0.26"
         HARBOR_PROJECT       = "ngn"
         IMAGE_TAG            = "${BUILD_NUMBER}"
 
