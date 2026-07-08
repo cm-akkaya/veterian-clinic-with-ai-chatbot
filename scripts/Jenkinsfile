@@ -124,7 +124,8 @@ pipeline {
                 echo "==> Eski container'lar durduruluyor..."
                 sh '''
                     cd ${WORKSPACE}
-                    docker compose down --remove-orphans || true
+                    docker compose -f docker-compose.harbor.yml ps || true
+                    docker compose -f docker-compose.harbor.yml down --remove-orphans || true
                 '''
             }
         }
